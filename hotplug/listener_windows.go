@@ -44,7 +44,7 @@ type listenerData struct {
 	eventChan   chan *devInterfaceNotification
 }
 
-func (dm *Listener) openHotplug() error {
+func (dm *Listener) enable() error {
 	dm.handle = cgo.NewHandle(dm)
 	dm.eventChan = make(chan *devInterfaceNotification, 10)
 
@@ -67,22 +67,11 @@ func (dm *Listener) openHotplug() error {
 		return errors.New("CM_Register_Notification failed")
 	}
 
-	//var ifListSize C.ULONG
-	//res = C.CM_Get_Device_Interface_List_Size(
-	//	&ifListSize,
-	//	&usbDeviceClass,
-	//	nil,
-	//	C.CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
-	//)
-	//if res != C.CR_SUCCESS {
-	//	return errors.New("CM_Get_Device_Interface_List failed")
-	//}
-
 	log.Debug("openHotplug done")
 	return nil
 }
 
-func (dm *Listener) closeListener() error {
+func (dm *Listener) disable() error {
 	// blocks while it delivers all pending notifications
 	res := C.CM_Unregister_Notification(dm.notifHandle)
 	if res != C.CR_SUCCESS {
@@ -134,4 +123,8 @@ func (dm *Listener) devIfLoop() {
 		}
 
 	}
+}
+
+func (l *Listener) enumerate() error {
+
 }

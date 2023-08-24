@@ -1,7 +1,7 @@
 package hotplug
 
-type HotplugProperty int32
+type DeviceType uint
 
 const (
-	Undefined HotplugProperty = iota
+	Unknown DeviceType = iota
 )
