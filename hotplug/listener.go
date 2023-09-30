@@ -1,57 +1,35 @@
 package hotplug
 
-import "errors"
-
-type HotplugEvent struct {
-	Device Device
-	Attach bool
-}
+type ListenerCallback func(device *Device)
 
 type Listener struct {
-	enabled  bool
-	devTypes []DeviceClass
+	callback    ListenerCallback
+	onlyClasses []DeviceClass
+	onlyBusses  []Bus
 	listenerData
 }
 
-func (l *Listener) FilterIncludeBus() error {
-	if l.enabled {
-		return errors.New("can't adjust filters while listener is enabled")
+func Listen(
+	callback ListenerCallback,
+	onlyClasses []DeviceClass,
+	onlyBusses []Bus,
+) (*Listener, error) {
+	l := &Listener{
+		callback:    callback,
+		onlyClasses: onlyClasses,
+		onlyBusses:  onlyBusses,
 	}
 
-	return nil
-}
-
-func (l *Listener) FilterIncludeDeviceType(devType DeviceClass) error {
-	if l.enabled {
-		return errors.New("can't adjust filters while listener is enabled")
-	}
-
-	l.devTypes = append(l.devTypes, devType)
-	return nil
-}
-
-func (l *Listener) Enable(callback ListenerCallback) error {
-	if l.enabled {
-		return errors.New("listener is already enabled")
-	}
-
-	l.callback = callback
-	l.enabled = true
-	return l.enable()
-}
-
-func (l *Listener) Disable() error {
-	if l.enabled {
-		return errors.New("listener is not enabled")
-	}
-
-	err := l.disable()
+	err := l.enable()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	l.enabled = false
-	return nil
+	return l, nil
+}
+
+func (l *Listener) Close() error {
+	return l.disable()
 }
 
 // Enumerate calls the callback function for each device present in the system.

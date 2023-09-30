@@ -22,7 +22,7 @@ import (
 import "C"
 
 type platformDevice struct {
-	symbolicLink   *C.WCHAR
+	symbolicLink   []C.WCHAR
 	deviceInstance C.DEVINST
 }
 
@@ -36,7 +36,7 @@ func (dev *Device) devInst() (C.DEVINST, error) {
 	var size C.ULONG = (C.ULONG)(len(devInstanceId) * C.sizeof_WCHAR)
 
 	status := C.CM_Get_Device_Interface_PropertyW(
-		dev.symbolicLink,
+		unsafe.SliceData(dev.symbolicLink),
 		&C.DEVPKEY_Device_InstanceId,
 		&propType,
 		(C.PBYTE)(unsafe.Pointer(&devInstanceId[0])),
@@ -130,5 +130,5 @@ func (dev *Device) getStringProperty(key *C.DEVPROPKEY) (string, error) {
 }
 
 func (dev *Device) path() (string, error) {
-	return wcharToGoString(dev.symbolicLink)
+	return wcharToGoString(unsafe.SliceData(dev.symbolicLink))
 }
