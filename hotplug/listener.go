@@ -2,8 +2,14 @@ package hotplug
 
 import "errors"
 
+type HotplugEvent struct {
+	Device Device
+	Attach bool
+}
+
 type Listener struct {
-	enabled bool
+	enabled  bool
+	devTypes []DeviceClass
 	listenerData
 }
 
@@ -15,19 +21,21 @@ func (l *Listener) FilterIncludeBus() error {
 	return nil
 }
 
-func (l *Listener) FilterIncludeDeviceType(devType DeviceType) error {
+func (l *Listener) FilterIncludeDeviceType(devType DeviceClass) error {
 	if l.enabled {
 		return errors.New("can't adjust filters while listener is enabled")
 	}
 
+	l.devTypes = append(l.devTypes, devType)
 	return nil
 }
 
-func (l *Listener) Enable() error {
+func (l *Listener) Enable(callback ListenerCallback) error {
 	if l.enabled {
 		return errors.New("listener is already enabled")
 	}
 
+	l.callback = callback
 	l.enabled = true
 	return l.enable()
 }

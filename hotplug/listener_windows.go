@@ -4,9 +4,6 @@ package hotplug
 
 import (
 	"errors"
-	"github.com/google/uuid"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/sys/windows"
 	"runtime/cgo"
 	"unsafe"
 )
@@ -33,52 +30,66 @@ import (
 import "C"
 
 type devInterfaceNotification struct {
-	attach       bool
-	deviceClass  uuid.UUID
-	symbolicLink string
+	device *Device
+	attach bool
 }
 
 type listenerData struct {
-	handle      cgo.Handle
-	notifHandle C.HCMNOTIFICATION
-	eventChan   chan *devInterfaceNotification
+	handle       cgo.Handle
+	notifHandles []C.HCMNOTIFICATION
+	eventChan    chan *devInterfaceNotification
 }
 
-func (dm *Listener) enable() error {
-	dm.handle = cgo.NewHandle(dm)
-	dm.eventChan = make(chan *devInterfaceNotification, 10)
+func (l *Listener) enable() error {
+	l.handle = cgo.NewHandle(l)
+	l.eventChan = make(chan *devInterfaceNotification, 10)
 
-	go dm.devIfLoop()
+	go l.devIfLoop()
+
+	for _, devType := range l.devTypes {
+		err := l.enableType(devType)
+		if err != nil {
+			_ = l.disable()
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (l *Listener) enableType(devType DeviceClass) error {
+	l.notifHandles = append(l.notifHandles, 0)
 
 	var filter C.CM_NOTIFY_FILTER
 	filter.cbSize = C.sizeof_CM_NOTIFY_FILTER
 	filter.FilterType = C.CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE
 	// filter.u.DeviceInterface.ClassGuid
-	//*((*C.GUID)(unsafe.Pointer(&filter.u[0]))) = usbDeviceClass
-	filter.Flags = C.CM_NOTIFY_FILTER_FLAG_ALL_INTERFACE_CLASSES
+	*((*C.GUID)(unsafe.Pointer(&filter.u[0]))) = deviceClassToGuid[devType]
+	//filter.Flags = C.CM_NOTIFY_FILTER_FLAG_ALL_INTERFACE_CLASSES
 
 	res := C.CM_Register_Notification(
 		&filter,
-		(C.PVOID)(unsafe.Pointer(&dm.handle)),
+		(C.PVOID)(unsafe.Pointer(&l.handle)),
 		(C.PCM_NOTIFY_CALLBACK)(C.configNotificationHandler),
-		&dm.notifHandle,
+		&l.notifHandles[len(l.notifHandles)-1],
 	)
 	if res != C.CR_SUCCESS {
 		return errors.New("CM_Register_Notification failed")
 	}
 
-	log.Debug("openHotplug done")
 	return nil
 }
 
-func (dm *Listener) disable() error {
-	// blocks while it delivers all pending notifications
-	res := C.CM_Unregister_Notification(dm.notifHandle)
-	if res != C.CR_SUCCESS {
-		return errors.New("CM_Register_Notification failed")
+func (l *Listener) disable() error {
+	for _, notifHandle := range l.notifHandles {
+		// blocks while it delivers all pending notifications
+		res := C.CM_Unregister_Notification(notifHandle)
+		if res != C.CR_SUCCESS {
+			return errors.New("CM_Unregister_Notification failed")
+		}
 	}
 
-	dm.handle.Delete()
+	l.handle.Delete()
 	return nil
 }
 
@@ -97,34 +108,26 @@ func configNotificationHandler(
 			action == C.CM_NOTIFY_ACTION_DEVICEINTERFACEREMOVAL
 	if isDevIface {
 		dm.eventChan <- &devInterfaceNotification{
+			&Device{
+				// data.u.DeviceInterface.SymbolicLink
+				symbolicLink: (*C.GUID)(unsafe.Pointer(&data.u[C.sizeof_GUID])),
+			},
 			action == C.CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL,
-			// data.u.DeviceInterface.ClassGuid
-			guidToUuid((*C.GUID)(unsafe.Pointer(&data.u[0]))),
-			// data.u.DeviceInterface.SymbolicLink
-			windows.UTF16PtrToString((*uint16)(unsafe.Pointer(&data.u[C.sizeof_GUID]))),
 		}
+		// data.u.DeviceInterface.ClassGuid
+		guidToUuid((*C.GUID)(unsafe.Pointer(&data.u[0]))),
 	}
 
 	return C.ERROR_SUCCESS
 }
 
-func (dm *Listener) devIfLoop() {
+func (l *Listener) devIfLoop() {
 	for {
-		notif := <-dm.eventChan
-		clog := log.WithFields(log.Fields{
-			"class":   notif.deviceClass,
-			"symlink": notif.symbolicLink,
-		})
-
-		if notif.attach {
-			clog.Debug("USB device arrived")
-		} else {
-			clog.Debug("USB device left")
-		}
+		notif := <-l.eventChan
 
 	}
 }
 
 func (l *Listener) enumerate() error {
-
+	return nil
 }

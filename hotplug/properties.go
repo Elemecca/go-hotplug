@@ -1,7 +1,11 @@
 package hotplug
 
-type DeviceType uint
+type DeviceClass uint
 
 const (
-	Unknown DeviceType = iota
+	UnknownClass DeviceClass = iota
+
+	HIDClass
+
+	PrinterClass
 )
