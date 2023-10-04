@@ -24,6 +24,7 @@ import "C"
 type platformDevice struct {
 	symbolicLink   []C.WCHAR
 	deviceInstance C.DEVINST
+	classGuid      C.GUID
 }
 
 func (dev *Device) devInst() (C.DEVINST, error) {
@@ -131,4 +132,33 @@ func (dev *Device) getStringProperty(key *C.DEVPROPKEY) (string, error) {
 
 func (dev *Device) path() (string, error) {
 	return wcharToGoString(unsafe.SliceData(dev.symbolicLink))
+}
+
+func (dev *Device) class() (DeviceClass, error) {
+	if dev.classGuid != 0 {
+		class, ok := guidToDeviceClass[dev.classGuid]
+		if ok {
+			return class, nil
+		} else {
+			return UnknownClass, errors.New("unrecognized device interface class GUID")
+		}
+	} else {
+		return UnknownClass, errors.New("this node is not a device interface")
+	}
+}
+
+func (dev *Device) bus() (Bus, error) {
+
+}
+
+func (dev *Device) vendorId() (string, error) {
+
+}
+
+func (dev *Device) productId() (string, error) {
+
+}
+
+func (dev *Device) serialNumber() (string, error) {
+
 }
