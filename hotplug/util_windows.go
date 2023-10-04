@@ -7,7 +7,6 @@ import "C"
 
 import (
 	"fmt"
-	"github.com/google/uuid"
 	"unsafe"
 )
 
@@ -30,31 +29,4 @@ func wcharToGoString(in *C.WCHAR) (string, error) {
 
 	// size includes the null termination but Go uses Pascal strings
 	return unsafe.String(buf, size-1), nil
-}
-
-// guidToUuid converts a Windows GUID struct to a Go UUID
-func guidToUuid(guid *C.GUID) uuid.UUID {
-	guidBytes := (*[C.sizeof_GUID]byte)(unsafe.Pointer(guid))
-	return uuid.UUID{
-		// Data1 long LE -> BE
-		guidBytes[3],
-		guidBytes[2],
-		guidBytes[1],
-		guidBytes[0],
-		// Data2 short LE -> BE
-		guidBytes[5],
-		guidBytes[4],
-		// Data3 short LE -> BE
-		guidBytes[7],
-		guidBytes[6],
-		// Data4 char[8], already BE
-		guidBytes[8],
-		guidBytes[9],
-		guidBytes[10],
-		guidBytes[11],
-		guidBytes[12],
-		guidBytes[13],
-		guidBytes[14],
-		guidBytes[15],
-	}
 }
