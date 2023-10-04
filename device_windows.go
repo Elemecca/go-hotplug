@@ -135,7 +135,7 @@ func (dev *Device) path() (string, error) {
 }
 
 func (dev *Device) class() (DeviceClass, error) {
-	if dev.classGuid != 0 {
+	if dev.classGuid != (C.GUID{}) {
 		class, ok := guidToDeviceClass[dev.classGuid]
 		if ok {
 			return class, nil
@@ -148,17 +148,17 @@ func (dev *Device) class() (DeviceClass, error) {
 }
 
 func (dev *Device) bus() (Bus, error) {
-
+	return UnknownBus, errors.New("not implemented")
 }
 
 func (dev *Device) vendorId() (string, error) {
-
+	return "", errors.New("not implemented")
 }
 
 func (dev *Device) productId() (string, error) {
-
+	return "", errors.New("not implemented")
 }
 
 func (dev *Device) serialNumber() (string, error) {
-
+	return "", errors.New("not implemented")
 }
