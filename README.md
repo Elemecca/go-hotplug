@@ -1,5 +1,7 @@
-# 
+# Hardware Hotplug Detection for Go
 
+`hotplug` lets you listen for new hardware devices being connected to
+the host computer.
 
 
 ## Copying
