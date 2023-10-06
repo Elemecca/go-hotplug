@@ -192,21 +192,10 @@ func enumerateClass(config Config, class DeviceClass) error {
 		}
 	}
 
-	// the result is a list of concatenated null-terminated WCHAR strings
-	// the list is terminated with an empty string
-	tail := buf
-	for {
-		length := C.wcsnlen(unsafe.SliceData(tail), (C.size_t)(len(tail)))
-		if length == 0 {
-			break
-		}
-
-		head := tail[:length]
-		tail = tail[length+1:]
-
+	for _, symbolicLink := range splitWcharStringList(buf) {
 		dev := &Device{}
 		dev.classGuid = classGuid
-		dev.symbolicLink = head
+		dev.symbolicLink = symbolicLink
 		config.handleArrive(dev)
 	}
 

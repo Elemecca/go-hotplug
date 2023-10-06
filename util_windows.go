@@ -2,11 +2,16 @@
 
 package hotplug
 
-// #include <windows.h>
+/*
+	#define WINVER 0x0602 // Windows 8
+	#define UNICODE
+	#include <windows.h>
+*/
 import "C"
 
 import (
 	"fmt"
+	"slices"
 	"unsafe"
 )
 
@@ -29,4 +34,25 @@ func wcharToGoString(in *C.WCHAR) (string, error) {
 
 	// size includes the null termination but Go uses Pascal strings
 	return unsafe.String(buf, size-1), nil
+}
+
+// splitWcharStringList converts a Windows REG_MULTI_SZ/ZZWSTR list of strings
+// provided as a slice of WCHAR to a slice of strings each of which is a slice
+// of WCHAR including one null termination.
+func splitWcharStringList(list []C.WCHAR) [][]C.WCHAR {
+	out := make([][]C.WCHAR, 10)
+	tail := list
+	for {
+		nextNull := slices.Index(tail, 0)
+		if nextNull <= 0 {
+			break
+		}
+
+		head := tail[:nextNull+1]
+		tail = tail[nextNull+1:]
+
+		out = append(out, head)
+	}
+
+	return out
 }

@@ -5,6 +5,8 @@ package hotplug
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"unsafe"
 )
 
@@ -25,6 +27,9 @@ type platformDevice struct {
 	symbolicLink   []C.WCHAR
 	deviceInstance C.DEVINST
 	classGuid      C.GUID
+	enumerator     string
+	hardwareIds    map[string]string
+	compatibleIds  map[string]string
 }
 
 func (dev *Device) devInst() (C.DEVINST, error) {
@@ -130,6 +135,36 @@ func (dev *Device) getStringProperty(key *C.DEVPROPKEY) (string, error) {
 	return wcharToGoString((*C.WCHAR)(unsafe.Pointer(unsafe.SliceData(buf))))
 }
 
+func (dev *Device) getStringListProperty(key *C.DEVPROPKEY) ([]string, error) {
+	buf, err := dev.getProperty(key, C.DEVPROP_TYPE_STRING_LIST)
+	if err != nil {
+		return nil, err
+	}
+
+	// reinterpret cast []byte to []WCHAR
+	wcBuf := unsafe.Slice((*C.WCHAR)(unsafe.Pointer(unsafe.SliceData(buf))), len(buf))
+
+	wcharStrings := splitWcharStringList(wcBuf)
+	out := make([]string, len(wcharStrings))
+	for idx, wcharString := range wcharStrings {
+		out[idx], err = wcharToGoString(unsafe.SliceData(wcharString))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return out, nil
+}
+
+func (dev *Device) getInt32Property(key *C.DEVPROPKEY) (int, error) {
+	buf, err := dev.getProperty(key, C.DEVPROP_TYPE_INT32)
+	if err != nil {
+		return 0, err
+	}
+
+	return (int)(*(*C.LONG)(unsafe.Pointer(unsafe.SliceData(buf)))), nil
+}
+
 func (dev *Device) path() (string, error) {
 	return wcharToGoString(unsafe.SliceData(dev.symbolicLink))
 }
@@ -147,18 +182,102 @@ func (dev *Device) class() (DeviceClass, error) {
 	}
 }
 
+var idRe = regexp.MustCompile(`^\\\\[^\\]+\\([^\\]+)(?:\\|#|$)`)
+var paramRe = regexp.MustCompile(`^([A-Z]+)_([^&]+)(?:&|$)`)
+
+func (dev *Device) getIds(key *C.DEVPROPKEY) (map[string]string, error) {
+	idStrings, err := dev.getStringListProperty(key)
+	if err != nil {
+		return nil, err
+	}
+
+	params := make(map[string]string)
+	for _, idString := range idStrings {
+		idMatch := idRe.FindStringSubmatch(idString)
+		if idMatch == nil {
+			continue
+		}
+
+		for _, param := range paramRe.FindAllStringSubmatch(idMatch[1], -1) {
+			params[param[1]] = param[2]
+		}
+	}
+
+	return params, nil
+}
+
+func (dev *Device) getHardwareIds() (map[string]string, error) {
+	if dev.hardwareIds == nil {
+		return dev.hardwareIds, nil
+	}
+
+	hardwareIds, err := dev.getIds(&C.DEVPKEY_Device_HardwareIds)
+	if err != nil {
+		return nil, err
+	}
+
+	dev.hardwareIds = hardwareIds
+	return hardwareIds, nil
+}
+
+func (dev *Device) getHardwareId(key string) (string, error) {
+	hardwareIds, err := dev.getHardwareIds()
+	if err != nil {
+		return "", err
+	}
+
+	val, ok := hardwareIds[key]
+	if ok {
+		return val, nil
+	} else {
+		return "", errors.New(fmt.Sprintf("HardwareIds does not contain %s property", key))
+	}
+}
+
+func (dev *Device) getHardwareIdHex(key string) (int, error) {
+	str, err := dev.getHardwareId(key)
+	if err != nil {
+		return 0, err
+	}
+
+	val, err := strconv.ParseInt(str, 16, 32)
+	if err != nil {
+		return 0, err
+	}
+
+	return (int)(val), nil
+}
+
+func (dev *Device) getCompatibleIds() (map[string]string, error) {
+	if dev.compatibleIds == nil {
+		return dev.compatibleIds, nil
+	}
+
+	compatibleIds, err := dev.getIds(&C.DEVPKEY_Device_CompatibleIds)
+	if err != nil {
+		return nil, err
+	}
+
+	dev.compatibleIds = compatibleIds
+	return compatibleIds, nil
+}
+
 func (dev *Device) bus() (Bus, error) {
 	return UnknownBus, errors.New("not implemented")
 }
 
-func (dev *Device) vendorId() (string, error) {
-	return "", errors.New("not implemented")
+func (dev *Device) busNumber() (int, error) {
+	return dev.getInt32Property(&C.DEVPKEY_Device_BusNumber)
 }
 
-func (dev *Device) productId() (string, error) {
-	return "", errors.New("not implemented")
+func (dev *Device) address() (int, error) {
+	return dev.getInt32Property(&C.DEVPKEY_Device_Address)
 }
 
-func (dev *Device) serialNumber() (string, error) {
-	return "", errors.New("not implemented")
+func (dev *Device) vendorId() (int, error) {
+	return dev.getHardwareIdHex("VID")
+}
+
+func (dev *Device) productId() (int, error) {
+	return dev.getHardwareIdHex("PID")
 }
