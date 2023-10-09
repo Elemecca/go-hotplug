@@ -262,10 +262,6 @@ func (dev *Device) getCompatibleIds() (map[string]string, error) {
 	return compatibleIds, nil
 }
 
-func (dev *Device) bus() (Bus, error) {
-	return UnknownBus, errors.New("not implemented")
-}
-
 func (dev *Device) busNumber() (int, error) {
 	return dev.getInt32Property(&C.DEVPKEY_Device_BusNumber)
 }

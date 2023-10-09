@@ -1,21 +1,35 @@
 package hotplug
 
-import "io"
+type DeviceCallback func(device *Device, present bool)
 
-type DeviceCallback func(device *Device)
+type Listener struct {
+	class     DeviceClass
+	callback  DeviceCallback
+	listening bool
+	platformListener
+}
 
-type Config struct {
-	ArriveCallback DeviceCallback
-	OnlyClasses    []DeviceClass
-	OnlyBusses     []Bus
+func New(
+	class DeviceClass,
+	callback DeviceCallback,
+) (*Listener, error) {
+	l := &Listener{
+		class:    class,
+		callback: callback,
+	}
+	return l, l.init()
 }
 
 // Listen calls the ArriveCallback each time a device is connected.
-func Listen(config Config) (io.Closer, error) {
-	return listen(config)
+func (l *Listener) Listen() error {
+	return l.listen()
+}
+
+func (l *Listener) Stop() error {
+	return l.stop()
 }
 
 // Enumerate calls the ArriveCallback for each device present in the system.
-func Enumerate(config Config) error {
-	return enumerate(config)
+func (l *Listener) Enumerate() error {
+	return l.enumerate()
 }

@@ -4,9 +4,7 @@ package hotplug
 
 import (
 	"errors"
-	"io"
 	"runtime/cgo"
-	"slices"
 	"unsafe"
 )
 
@@ -32,47 +30,37 @@ import (
 */
 import "C"
 
-type listener struct {
-	config       Config
-	handle       cgo.Handle
-	notifHandles []C.HCMNOTIFICATION
-	eventChan    chan *Device
+type platformListener struct {
+	handle      cgo.Handle
+	notifHandle C.HCMNOTIFICATION
+	eventChan   chan *Device
 }
 
-func listen(config Config) (io.Closer, error) {
-	l := &listener{
-		config: config,
+func (l *Listener) init() error {
+	return nil
+}
+
+func (l *Listener) listen() error {
+	if l.notifHandle != nil {
+		return errors.New("listener is already listening")
 	}
+
 	l.handle = cgo.NewHandle(l)
 	l.eventChan = make(chan *Device, 10)
 
 	go l.eventPump()
 
-	for _, devType := range l.config.OnlyClasses {
-		err := l.enableType(devType)
-		if err != nil {
-			_ = l.Close()
-			return nil, err
-		}
-	}
-
-	return l, nil
-}
-
-func (l *listener) enableType(devType DeviceClass) error {
-	l.notifHandles = append(l.notifHandles, nil)
-
 	var filter C.CM_NOTIFY_FILTER
 	filter.cbSize = C.sizeof_CM_NOTIFY_FILTER
 	filter.FilterType = C.CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE
 	// filter.u.DeviceInterface.ClassGuid
-	*((*C.GUID)(unsafe.Pointer(&filter.u[0]))) = deviceClassToGuid[devType]
+	*((*C.GUID)(unsafe.Pointer(&filter.u[0]))) = deviceClassToGuid[l.class]
 
 	res := C.CM_Register_Notification(
 		&filter,
 		(C.PVOID)(unsafe.Pointer(&l.handle)),
 		(C.PCM_NOTIFY_CALLBACK)(C.configNotificationHandler),
-		&l.notifHandles[len(l.notifHandles)-1],
+		&l.notifHandle,
 	)
 	if res != C.CR_SUCCESS {
 		return errors.New("CM_Register_Notification failed")
@@ -81,29 +69,21 @@ func (l *listener) enableType(devType DeviceClass) error {
 	return nil
 }
 
-func (l *listener) Close() (err error) {
-	for _, notifHandle := range l.notifHandles {
-		// blocks while it delivers all pending notifications
-		res := C.CM_Unregister_Notification(notifHandle)
-		if res != C.CR_SUCCESS && err == nil {
-			err = errors.New("CM_Unregister_Notification failed")
-		}
+func (l *Listener) stop() (err error) {
+	if l.notifHandle == nil {
+		return errors.New("listener is not listening")
 	}
 
+	// blocks while it delivers all pending notifications
+	res := C.CM_Unregister_Notification(l.notifHandle)
+	if res != C.CR_SUCCESS {
+		err = errors.New("CM_Unregister_Notification failed")
+	}
+
+	l.notifHandle = nil
 	close(l.eventChan)
 	l.handle.Delete()
 	return
-}
-
-func (c *Config) handleArrive(device *Device) {
-	if len(c.OnlyBusses) == 0 {
-		c.ArriveCallback(device)
-	} else {
-		bus, err := device.Bus()
-		if err == nil && slices.Contains(c.OnlyBusses, bus) {
-			c.ArriveCallback(device)
-		}
-	}
 }
 
 //export configNotificationHandler
@@ -114,7 +94,7 @@ func configNotificationHandler(
 	data C.PCM_NOTIFY_EVENT_DATA,
 	eventDataSize C.DWORD,
 ) C.DWORD {
-	l := (*(*cgo.Handle)(context)).Value().(*listener)
+	l := (*(*cgo.Handle)(context)).Value().(*Listener)
 
 	if action == C.CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL {
 		dev := &Device{}
@@ -142,24 +122,14 @@ func configNotificationHandler(
 	return C.ERROR_SUCCESS
 }
 
-func (l *listener) eventPump() {
+func (l *Listener) eventPump() {
 	for dev := range l.eventChan {
-		l.config.handleArrive(dev)
+		l.callback(dev, true)
 	}
 }
 
-func enumerate(config Config) error {
-	for _, class := range config.OnlyClasses {
-		err := enumerateClass(config, class)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func enumerateClass(config Config, class DeviceClass) error {
-	classGuid := deviceClassToGuid[class]
+func (l *Listener) enumerate() error {
+	classGuid := deviceClassToGuid[l.class]
 	var bufSize C.ULONG
 	var buf []C.WCHAR
 
@@ -196,7 +166,7 @@ func enumerateClass(config Config, class DeviceClass) error {
 		dev := &Device{}
 		dev.classGuid = classGuid
 		dev.symbolicLink = symbolicLink
-		config.handleArrive(dev)
+		l.callback(dev, true)
 	}
 
 	return nil

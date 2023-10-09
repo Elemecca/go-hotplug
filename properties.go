@@ -9,11 +9,3 @@ const (
 
 	PrinterClass
 )
-
-type Bus uint
-
-const (
-	UnknownBus Bus = iota
-
-	USB
-)

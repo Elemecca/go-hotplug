@@ -8,14 +8,6 @@ func (dev *Device) Path() (string, error) {
 	return dev.path()
 }
 
-func (dev *Device) Class() (DeviceClass, error) {
-	return dev.class()
-}
-
-func (dev *Device) Bus() (Bus, error) {
-	return dev.bus()
-}
-
 // BusNumber is a number distinguishing the bus the device is connected to
 // from other busses of the same type on the computer.
 //
