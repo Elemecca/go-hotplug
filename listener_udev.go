@@ -23,6 +23,7 @@ type platformListener struct {
 	closeChan chan interface{}
 	closePipe []int
 	deviceFd  int
+	detachCb  map[string][]func()
 }
 
 func (l *Listener) init() error {
@@ -37,6 +38,8 @@ func (l *Listener) init() error {
 	}
 
 	runtime.SetFinalizer(l, freeListener)
+
+	l.detachCb = make(map[string][]func())
 
 	return nil
 }
@@ -175,7 +178,15 @@ func (l *Listener) eventPump() {
 				continue
 			}
 
-			l.handleDevice(dev)
+			action := C.udev_device_get_action(dev)
+			if action != nil {
+				if C.strcmp(action, C.CString("add")) == 0 {
+					l.handleArrive(dev)
+				} else if C.strcmp(action, C.CString("remove")) == 0 {
+					l.handleRemove(dev)
+				}
+			}
+
 			C.udev_device_unref(dev)
 		}
 	}
@@ -227,7 +238,7 @@ func (l *Listener) enumerate() error {
 			continue
 		}
 
-		l.handleDevice(dev)
+		l.handleArrive(dev)
 		C.udev_device_unref(dev)
 
 		entry = C.udev_list_entry_get_next(entry)
@@ -239,22 +250,8 @@ func (l *Listener) enumerate() error {
 	return nil
 }
 
-func (l *Listener) handleDevice(dev *C.struct_udev_device) {
+func (l *Listener) handleArrive(dev *C.struct_udev_device) {
 	if !l.condition.matches(dev) {
-		return
-	}
-
-	action := C.udev_device_get_action(dev)
-	if action == nil {
-		return
-	}
-
-	var present bool
-	if C.strcmp(action, C.CString("add")) == 0 {
-		present = true
-	} else if C.strcmp(action, C.CString("remove")) == 0 {
-		present = false
-	} else {
 		return
 	}
 
@@ -262,7 +259,13 @@ func (l *Listener) handleDevice(dev *C.struct_udev_device) {
 	if devnode == nil {
 		return
 	}
-	path := C.GoString(devnode)
+	goDevnode := C.GoString(devnode)
+
+	devpath := C.udev_device_get_devpath(dev)
+	if devpath == nil {
+		return
+	}
+	goDevpath := C.GoString(devpath)
 
 	if l.condition.interfaceOnly {
 		dev = C.udev_device_get_parent(dev)
@@ -271,12 +274,33 @@ func (l *Listener) handleDevice(dev *C.struct_udev_device) {
 		}
 	}
 
-	l.callback(
-		&DeviceInterface{
-			Path:   path,
-			Class:  l.class,
-			Device: newDevice(l, dev),
-		},
-		present,
-	)
+	goDevIf := &DeviceInterface{}
+	goDevIf.listener = l
+	goDevIf.Path = goDevnode
+	goDevIf.Class = l.class
+	goDevIf.Device = newDevice(l, dev)
+	goDevIf.devpath = goDevpath
+	goDevIf.inArrive = true
+
+	l.callback(goDevIf)
+
+	goDevIf.inArrive = false
+}
+
+func (l *Listener) handleRemove(dev *C.struct_udev_device) {
+	devpath := C.udev_device_get_devpath(dev)
+	if devpath == nil {
+		return
+	}
+	goDevpath := C.GoString(devpath)
+
+	callbacks := l.detachCb[goDevpath]
+	if callbacks != nil {
+		for _, callback := range callbacks {
+			if callback != nil {
+				callback()
+			}
+		}
+		delete(l.detachCb, goDevpath)
+	}
 }

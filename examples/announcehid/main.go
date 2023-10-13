@@ -8,7 +8,7 @@ import (
 func main() {
 	listener, _ := hotplug.New(
 		hotplug.DevIfHid,
-		func(devIf *hotplug.DeviceInterface, present bool) {
+		func(devIf *hotplug.DeviceInterface) {
 			usb, err := devIf.Device.Up(hotplug.DevUsbDevice)
 			if err != nil {
 				fmt.Printf("usb parent not found: %s\n", err.Error())
@@ -20,17 +20,23 @@ func main() {
 			vendorId, _ := usb.VendorId()
 			productId, _ := usb.ProductId()
 
-			var evt string
-			if present {
-				evt = "arrive"
-			} else {
-				evt = "depart"
-			}
-
 			fmt.Printf(
-				"%s bus=%d address=%d vid=%04x pid=%04x dev=%s\n",
-				evt, busNumber, address, vendorId, productId, devIf.Path,
+				"arrive bus=%d address=%d vid=%04x pid=%04x dev=%s\n",
+				busNumber, address, vendorId, productId, devIf.Path,
 			)
+
+			err = devIf.OnDetach(func() {
+				fmt.Printf(
+					"depart bus=%d address=%d vid=%04x pid=%04x dev=%s\n",
+					busNumber, address, vendorId, productId, devIf.Path,
+				)
+			})
+			if err != nil {
+				fmt.Printf(
+					"failed to register detach listener %s\n",
+					err.Error(),
+				)
+			}
 		},
 	)
 

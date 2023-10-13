@@ -7,6 +7,11 @@ type DeviceInterface struct {
 	Path   string
 	Class  InterfaceClass
 	Device *Device
+	platformDeviceInterface
+}
+
+func (devIf *DeviceInterface) OnDetach(callback func()) error {
+	return devIf.onDetach(callback)
 }
 
 type Device struct {

@@ -14,6 +14,26 @@ import (
 */
 import "C"
 
+type platformDeviceInterface struct {
+	listener *Listener
+	devpath  string
+	inArrive bool
+}
+
+func (devIf *DeviceInterface) onDetach(callback func()) error {
+	if !devIf.inArrive {
+		return errors.New("OnDetach must be called from the arrive callback")
+	}
+
+	callbacks := devIf.listener.detachCb[devIf.devpath]
+	if callbacks == nil {
+		callbacks = make([]func(), 1)
+	}
+
+	devIf.listener.detachCb[devIf.devpath] = append(callbacks, callback)
+	return nil
+}
+
 type platformDevice struct {
 	// prevents the udev context from being freed before the device
 	listener *Listener

@@ -1,6 +1,6 @@
 package hotplug
 
-type ListenerCallback func(iface *DeviceInterface, present bool)
+type ListenerCallback func(iface *DeviceInterface)
 
 type Listener struct {
 	class     InterfaceClass
