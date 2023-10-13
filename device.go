@@ -1,11 +1,27 @@
 package hotplug
 
+import "C"
+
+// A DeviceInterface describes a particular way to interact with a Device.
+type DeviceInterface struct {
+	Path   string
+	Class  InterfaceClass
+	Device *Device
+}
+
 type Device struct {
+	Path  string
+	Class DeviceClass
 	platformDevice
 }
 
-func (dev *Device) Path() (string, error) {
-	return dev.path()
+func (dev *Device) Parent() (*Device, error) {
+	return dev.parent()
+}
+
+// Up finds the nearest ancestor of this device which is of the given class.
+func (dev *Device) Up(class DeviceClass) (*Device, error) {
+	return dev.up(class)
 }
 
 // BusNumber is a number distinguishing the bus the device is connected to

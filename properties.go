@@ -1,11 +1,22 @@
 package hotplug
 
+type InterfaceClass uint
+
+const (
+	DevIfUnknown InterfaceClass = iota
+
+	DevIfHid
+
+	DevIfPrinter
+)
+
 type DeviceClass uint
 
 const (
-	UnknownClass DeviceClass = iota
+	DevUnknown DeviceClass = iota
 
-	HIDClass
+	DevHid
 
-	PrinterClass
+	DevUsbDevice
+	DevUsbInterface
 )

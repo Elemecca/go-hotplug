@@ -16,12 +16,8 @@ import (
 */
 import "C"
 
-var ADD = C.CString("add")
-var DEVTYPE = C.CString("DEVTYPE")
-var REMOVE = C.CString("remove")
-var UDEV = C.CString("udev")
-
 type platformListener struct {
+	condition *deviceCondition
 	udev      *C.struct_udev
 	monitor   *C.struct_udev_monitor
 	closeChan chan interface{}
@@ -30,6 +26,11 @@ type platformListener struct {
 }
 
 func (l *Listener) init() error {
+	l.condition = interfaceClassCondition[l.class]
+	if l.condition == nil {
+		return errors.New("unsupported InterfaceClass")
+	}
+
 	l.udev = C.udev_new()
 	if l.udev == nil {
 		return errors.New("failed to create udev context")
@@ -52,15 +53,15 @@ func (l *Listener) listen() (err error) {
 		return errors.New("listener is already listening")
 	}
 
-	l.monitor = C.udev_monitor_new_from_netlink(l.udev, UDEV)
+	l.monitor = C.udev_monitor_new_from_netlink(l.udev, C.CString("udev"))
 	if l.monitor == nil {
 		return errors.New("failed to create udev monitor")
 	}
 
 	res := C.udev_monitor_filter_add_match_subsystem_devtype(
 		l.monitor,
-		deviceClassToSubsystem[l.class],
-		deviceClassToDevtype[l.class],
+		l.condition.subsystem,
+		l.condition.devtype,
 	)
 	if res < 0 {
 		err = errors.New("failed to add udev filter")
@@ -119,6 +120,8 @@ fail:
 	C.udev_monitor_unref(l.monitor)
 	l.monitor = nil
 	l.deviceFd = -1
+	l.closeChan = nil
+	l.closePipe = nil
 	return
 }
 
@@ -141,6 +144,7 @@ func (l *Listener) stop() error {
 
 	C.udev_monitor_unref(l.monitor)
 	l.monitor = nil
+	l.deviceFd = -1
 
 	return nil
 }
@@ -171,21 +175,8 @@ func (l *Listener) eventPump() {
 				continue
 			}
 
-			action := C.udev_device_get_action(dev)
-			if action == nil {
-				continue
-			}
-
-			var present bool
-			if C.strcmp(action, ADD) == 0 {
-				present = true
-			} else if C.strcmp(action, REMOVE) == 0 {
-				present = false
-			} else {
-				continue
-			}
-
-			l.callback(newDevice(l, dev), present)
+			l.handleDevice(dev)
+			C.udev_device_unref(dev)
 		}
 	}
 
@@ -199,17 +190,17 @@ func (l *Listener) enumerate() error {
 	}
 	defer C.udev_enumerate_unref(enumerator)
 
-	res := C.udev_enumerate_add_match_subsystem(
-		enumerator,
-		deviceClassToSubsystem[l.class],
-	)
+	res := C.udev_enumerate_add_match_subsystem(enumerator, l.condition.subsystem)
 	if res < 0 {
 		return errors.New("failed to add udev subsystem filter")
 	}
 
-	devtype := deviceClassToDevtype[l.class]
-	if devtype != nil {
-		res = C.udev_enumerate_add_match_property(enumerator, DEVTYPE, devtype)
+	if l.condition.devtype != nil {
+		res = C.udev_enumerate_add_match_property(
+			enumerator,
+			C.CString("DEVTYPE"),
+			l.condition.devtype,
+		)
 		if res < 0 {
 			return errors.New("failed to add udev devtype filter")
 		}
@@ -236,7 +227,8 @@ func (l *Listener) enumerate() error {
 			continue
 		}
 
-		l.callback(newDevice(l, dev), true)
+		l.handleDevice(dev)
+		C.udev_device_unref(dev)
 
 		entry = C.udev_list_entry_get_next(entry)
 		if entry == nil {
@@ -245,4 +237,46 @@ func (l *Listener) enumerate() error {
 	}
 
 	return nil
+}
+
+func (l *Listener) handleDevice(dev *C.struct_udev_device) {
+	if !l.condition.matches(dev) {
+		return
+	}
+
+	action := C.udev_device_get_action(dev)
+	if action == nil {
+		return
+	}
+
+	var present bool
+	if C.strcmp(action, C.CString("add")) == 0 {
+		present = true
+	} else if C.strcmp(action, C.CString("remove")) == 0 {
+		present = false
+	} else {
+		return
+	}
+
+	devnode := C.udev_device_get_devnode(dev)
+	if devnode == nil {
+		return
+	}
+	path := C.GoString(devnode)
+
+	if l.condition.interfaceOnly {
+		dev = C.udev_device_get_parent(dev)
+		if dev == nil {
+			return
+		}
+	}
+
+	l.callback(
+		&DeviceInterface{
+			Path:   path,
+			Class:  l.class,
+			Device: newDevice(l, dev),
+		},
+		present,
+	)
 }

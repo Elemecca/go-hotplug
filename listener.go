@@ -1,17 +1,17 @@
 package hotplug
 
-type DeviceCallback func(device *Device, present bool)
+type ListenerCallback func(iface *DeviceInterface, present bool)
 
 type Listener struct {
-	class     DeviceClass
-	callback  DeviceCallback
+	class     InterfaceClass
+	callback  ListenerCallback
 	listening bool
 	platformListener
 }
 
 func New(
-	class DeviceClass,
-	callback DeviceCallback,
+	class InterfaceClass,
+	callback ListenerCallback,
 ) (*Listener, error) {
 	l := &Listener{
 		class:    class,
