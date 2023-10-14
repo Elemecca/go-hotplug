@@ -4,6 +4,7 @@ package hotplug
 
 import (
 	"errors"
+	"golang.org/x/sys/windows"
 	"runtime/cgo"
 	"unsafe"
 )
@@ -14,11 +15,13 @@ import (
 	#define UNICODE
 	#include <windows.h>
 	#include <cfgmgr32.h>
+	#include <devpkey.h>
     #include <string.h>
 
 	// these are missing from cfgmgr32.h in mingw-w64
 	CMAPI CONFIGRET WINAPI CM_Register_Notification(PCM_NOTIFY_FILTER pFilter, PVOID pContext, PCM_NOTIFY_CALLBACK pCallback, PHCMNOTIFICATION pNotifyContext);
 	CMAPI CONFIGRET WINAPI CM_Unregister_Notification(HCMNOTIFICATION NotifyContext);
+	CMAPI CONFIGRET WINAPI CM_Get_Device_Interface_PropertyW(LPCWSTR pszDeviceInterface, const DEVPROPKEY *PropertyKey, DEVPROPTYPE *PropertyType, PBYTE PropertyBuffer, PULONG PropertyBufferSize, ULONG ulFlags);
 
 	DWORD configNotificationHandler(
 		HCMNOTIFICATION hNotify,
@@ -33,7 +36,7 @@ import "C"
 type platformListener struct {
 	handle      cgo.Handle
 	notifHandle C.HCMNOTIFICATION
-	eventChan   chan *Device
+	eventChan   chan *DeviceInterface
 }
 
 func (l *Listener) init() error {
@@ -46,7 +49,7 @@ func (l *Listener) listen() error {
 	}
 
 	l.handle = cgo.NewHandle(l)
-	l.eventChan = make(chan *Device, 10)
+	l.eventChan = make(chan *DeviceInterface, 10)
 
 	go l.eventPump()
 
@@ -54,7 +57,7 @@ func (l *Listener) listen() error {
 	filter.cbSize = C.sizeof_CM_NOTIFY_FILTER
 	filter.FilterType = C.CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE
 	// filter.u.DeviceInterface.ClassGuid
-	*((*C.GUID)(unsafe.Pointer(&filter.u[0]))) = deviceClassToGuid[l.class]
+	*((*C.GUID)(unsafe.Pointer(&filter.u[0]))) = interfaceClassToGuid[l.class]
 
 	res := C.CM_Register_Notification(
 		&filter,
@@ -97,10 +100,10 @@ func configNotificationHandler(
 	l := (*(*cgo.Handle)(context)).Value().(*Listener)
 
 	if action == C.CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL {
-		dev := &Device{}
+		devIf := &DeviceInterface{}
 
 		// data.u.DeviceInterface.ClassGuid
-		dev.classGuid = *(*C.GUID)(unsafe.Pointer(&data.u[0]))
+		devIf.classGuid = *(*C.GUID)(unsafe.Pointer(&data.u[0]))
 
 		// data.u.DeviceInterface.SymbolicLink
 		eventSymLink := (*C.WCHAR)(unsafe.Pointer(&data.u[C.sizeof_GUID]))
@@ -110,28 +113,28 @@ func configNotificationHandler(
 		// so it probably belongs to the caller
 		// copy the symbolic link string into go-managed memory
 		length := C.wcslen(eventSymLink) + 1
-		dev.symbolicLink = make([]C.WCHAR, length)
-		C.wcsncpy(unsafe.SliceData(dev.symbolicLink), eventSymLink, length)
+		devIf.symbolicLink = make([]uint16, length)
+		C.wcsncpy((*C.WCHAR)(unsafe.SliceData(devIf.symbolicLink)), eventSymLink, length)
 
 		// this function must return promptly to avoid holding up the system
 		// so do the filtering and the user callback in a separate goroutine
 		// this could still block if the channel buffer fills up
-		l.eventChan <- dev
+		l.eventChan <- devIf
 	}
 
 	return C.ERROR_SUCCESS
 }
 
 func (l *Listener) eventPump() {
-	for dev := range l.eventChan {
-		l.callback(dev, true)
+	for devIf := range l.eventChan {
+		l.handleArrive(devIf)
 	}
 }
 
 func (l *Listener) enumerate() error {
-	classGuid := deviceClassToGuid[l.class]
+	classGuid := interfaceClassToGuid[l.class]
 	var bufSize C.ULONG
-	var buf []C.WCHAR
+	var buf []uint16
 
 	// the list can change between the calls to _List_Size and _List
 	// if that happens _List returns CR_BUFFER_SMALL and we try again
@@ -146,12 +149,11 @@ func (l *Listener) enumerate() error {
 			return errors.New("CM_Get_Device_Interface_List_Size failed")
 		}
 
-		buf = make([]C.WCHAR, bufSize)
-
+		buf = make([]uint16, bufSize)
 		res = C.CM_Get_Device_Interface_ListW(
 			&classGuid,
 			nil,
-			unsafe.SliceData(buf),
+			(*C.WCHAR)(unsafe.SliceData(buf)),
 			bufSize,
 			C.CM_GET_DEVICE_INTERFACE_LIST_PRESENT,
 		)
@@ -162,12 +164,62 @@ func (l *Listener) enumerate() error {
 		}
 	}
 
-	for _, symbolicLink := range splitWcharStringList(buf) {
-		dev := &Device{}
-		dev.classGuid = classGuid
-		dev.symbolicLink = symbolicLink
-		l.callback(dev, true)
+	for _, symbolicLink := range splitUTF16StringList(buf) {
+		devIf := &DeviceInterface{}
+		devIf.classGuid = classGuid
+		devIf.symbolicLink = symbolicLink
+		l.handleArrive(devIf)
 	}
 
 	return nil
+}
+
+func (l *Listener) handleArrive(devIf *DeviceInterface) {
+	devIf.Path = windows.UTF16ToString(devIf.symbolicLink)
+	devIf.Class = guidToInterfaceClass[devIf.classGuid]
+	devIf.Device = &Device{}
+
+	var propType C.DEVPROPTYPE
+	var devInstanceId [C.MAX_DEVICE_ID_LEN + 1]uint16
+	var size C.ULONG
+
+	size = (C.ULONG)(unsafe.Sizeof(devInstanceId))
+	status := C.CM_Get_Device_Interface_PropertyW(
+		(*C.WCHAR)(unsafe.SliceData(devIf.symbolicLink)),
+		&C.DEVPKEY_Device_InstanceId,
+		&propType,
+		(C.PBYTE)(unsafe.Pointer(&devInstanceId[0])),
+		&size,
+		0,
+	)
+	if status != C.CR_SUCCESS || propType != C.DEVPROP_TYPE_STRING {
+		return
+	}
+
+	status = C.CM_Locate_DevNodeW(
+		&devIf.Device.deviceInstance,
+		(*C.WCHAR)(&devInstanceId[0]),
+		C.CM_LOCATE_DEVNODE_NORMAL,
+	)
+	if status != C.CR_SUCCESS {
+		return
+	}
+
+	size = (C.ULONG)(unsafe.Sizeof(devIf.Device.classGuid))
+	status = C.CM_Get_DevNode_PropertyW(
+		devIf.Device.deviceInstance,
+		&C.DEVPKEY_Device_ClassGuid,
+		&propType,
+		(C.PBYTE)(unsafe.Pointer(&devIf.Device.classGuid)),
+		&size,
+		0,
+	)
+	if status != C.CR_SUCCESS || propType != C.DEVPROP_TYPE_GUID {
+		return
+	}
+
+	devIf.Device.Path = windows.UTF16ToString(devInstanceId[:])
+	devIf.Device.Class = guidToDeviceClass[devIf.Device.classGuid]
+
+	l.callback(devIf)
 }

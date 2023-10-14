@@ -9,7 +9,7 @@ package hotplug
 */
 import "C"
 
-var deviceClassToGuid map[InterfaceClass]C.GUID = map[InterfaceClass]C.GUID{
+var interfaceClassToGuid = map[InterfaceClass]C.GUID{
 	// GUID_DEVINTERFACE_HID {4D1E55B2-F16F-11CF-88CB-001111000030}
 	DevIfHid: C.GUID{
 		0x4D1E55B2, 0xF16F, 0x11CF,
@@ -23,10 +23,30 @@ var deviceClassToGuid map[InterfaceClass]C.GUID = map[InterfaceClass]C.GUID{
 	},
 }
 
-var guidToDeviceClass map[C.GUID]InterfaceClass
+var deviceClassToGuid = map[DeviceClass]C.GUID{
+	// {745a17a0-74d3-11d0-b6fe-00a0c90f57da}
+	DevHid: C.GUID{
+		0x745A17A0, 0x74D3, 0x11D0,
+		[8]C.uchar{0xB6, 0xFE, 0x00, 0xA0, 0xC9, 0x0F, 0x57, 0xDA},
+	},
+
+	// {36fc9e60-c465-11cf-8056-444553540000}
+	DevUsbDevice: C.GUID{
+		0x36FC9E60, 0xC465, 0x11CF,
+		[8]C.uchar{0x80, 0x56, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00},
+	},
+}
+
+var guidToInterfaceClass map[C.GUID]InterfaceClass
+var guidToDeviceClass map[C.GUID]DeviceClass
 
 func init() {
-	guidToDeviceClass = make(map[C.GUID]InterfaceClass, len(deviceClassToGuid))
+	guidToInterfaceClass = make(map[C.GUID]InterfaceClass)
+	for interfaceClass, guid := range interfaceClassToGuid {
+		guidToInterfaceClass[guid] = interfaceClass
+	}
+
+	guidToDeviceClass = make(map[C.GUID]DeviceClass)
 	for deviceClass, guid := range deviceClassToGuid {
 		guidToDeviceClass[guid] = deviceClass
 	}
