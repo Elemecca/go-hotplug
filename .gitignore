@@ -1,0 +1,7 @@
+
+# build output
+/announcehid
+/*.exe
+
+# GoLand configuration
+/.idea/
