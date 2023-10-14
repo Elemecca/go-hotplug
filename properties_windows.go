@@ -2,11 +2,7 @@
 
 package hotplug
 
-/*
-	#define WINVER 0x0602 // Windows 8
-	#define UNICODE
-	#include <windows.h>
-*/
+// #include "common_windows.h"
 import "C"
 
 var interfaceClassToGuid = map[InterfaceClass]C.GUID{

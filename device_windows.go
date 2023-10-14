@@ -11,14 +11,7 @@ import (
 	"unsafe"
 )
 
-/*
-	#cgo LDFLAGS: -lcfgmgr32
-	#define WINVER 0x0602 // Windows 8
-	#define UNICODE
-    #include <windows.h>
-    #include <cfgmgr32.h>
-	#include <devpkey.h>
-*/
+// #include "common_windows.h"
 import "C"
 
 type platformDeviceInterface struct {
