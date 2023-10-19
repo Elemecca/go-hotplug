@@ -168,24 +168,18 @@ func (l *Listener) handleArrive(devIf *DeviceInterface) {
 	devIf.Class = guidToInterfaceClass[devIf.classGuid]
 	devIf.Device = &Device{}
 
-	var propType C.DEVPROPTYPE
 	var devInstanceId [C.MAX_DEVICE_ID_LEN + 1]uint16
-	var size C.ULONG
-
-	size = (C.ULONG)(unsafe.Sizeof(devInstanceId))
-	status := C.CM_Get_Device_Interface_PropertyW(
-		(*C.WCHAR)(unsafe.SliceData(devIf.symbolicLink)),
+	err := getDevIfPropFixed(
+		devIf.symbolicLink,
 		&C.DEVPKEY_Device_InstanceId,
-		&propType,
-		(C.PBYTE)(unsafe.Pointer(&devInstanceId[0])),
-		&size,
-		0,
+		C.DEVPROP_TYPE_STRING,
+		&devInstanceId,
 	)
-	if status != C.CR_SUCCESS || propType != C.DEVPROP_TYPE_STRING {
+	if err != nil {
 		return
 	}
 
-	status = C.CM_Locate_DevNodeW(
+	status := C.CM_Locate_DevNodeW(
 		&devIf.Device.deviceInstance,
 		(*C.WCHAR)(&devInstanceId[0]),
 		C.CM_LOCATE_DEVNODE_NORMAL,
@@ -194,16 +188,13 @@ func (l *Listener) handleArrive(devIf *DeviceInterface) {
 		return
 	}
 
-	size = (C.ULONG)(unsafe.Sizeof(devIf.Device.classGuid))
-	status = C.CM_Get_DevNode_PropertyW(
+	err = getDevPropFixed(
 		devIf.Device.deviceInstance,
 		&C.DEVPKEY_Device_ClassGuid,
-		&propType,
-		(C.PBYTE)(unsafe.Pointer(&devIf.Device.classGuid)),
-		&size,
-		0,
+		C.DEVPROP_TYPE_GUID,
+		&devIf.Device.classGuid,
 	)
-	if status != C.CR_SUCCESS || propType != C.DEVPROP_TYPE_GUID {
+	if err != nil {
 		return
 	}
 

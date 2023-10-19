@@ -122,7 +122,57 @@ func (dev *Device) parent() (*Device, error) {
 }
 
 func (dev *Device) up(class DeviceClass) (*Device, error) {
-	return nil, errors.New("not implemented")
+	devInst := dev.deviceInstance
+	targetClassGuid, haveClassGuid := deviceClassToGuid[class]
+	if !haveClassGuid {
+		return nil, errors.New("not supported for that DeviceClass")
+	}
+
+	for {
+		var parentInst C.DEVINST
+		sta := C.CM_Get_Parent(&parentInst, devInst, 0)
+		if sta != C.CR_SUCCESS {
+			return nil, errors.New(fmt.Sprintf(
+				"failed to get parent device (CONFIGRET 0x%X)",
+				sta,
+			))
+		}
+		devInst = parentInst
+
+		var classGuid C.GUID
+		err := getDevPropFixed(
+			devInst,
+			&C.DEVPKEY_Device_ClassGuid,
+			C.DEVPROP_TYPE_GUID,
+			&classGuid,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if classGuid == targetClassGuid {
+			break
+		}
+	}
+
+	var devInstanceId [C.MAX_DEVICE_ID_LEN + 1]uint16
+	err := getDevPropFixed(
+		devInst,
+		&C.DEVPKEY_Device_InstanceId,
+		C.DEVPROP_TYPE_STRING,
+		&devInstanceId,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	parent := &Device{}
+	parent.Class = class
+	parent.classGuid = targetClassGuid
+	parent.deviceInstance = devInst
+	parent.Path = windows.UTF16ToString(devInstanceId[:])
+
+	return parent, nil
 }
 
 var idRe = regexp.MustCompile(`^\\\\[^\\]+\\([^\\]+)(?:\\|#|$)`)
