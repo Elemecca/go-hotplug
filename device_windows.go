@@ -17,10 +17,22 @@ import "C"
 type platformDeviceInterface struct {
 	symbolicLink []uint16
 	classGuid    C.GUID
+	inArrive     bool
+	listener     *Listener
 }
 
 func (devIf *DeviceInterface) onDetach(callback func()) error {
-	return errors.New("not implemented")
+	if !devIf.inArrive {
+		return errors.New("OnDetach must be called from the arrive callback")
+	}
+
+	callbacks := devIf.listener.detachCb[devIf.Path]
+	if callbacks == nil {
+		callbacks = make([]func(), 1)
+	}
+
+	devIf.listener.detachCb[devIf.Path] = append(callbacks, callback)
+	return nil
 }
 
 type platformDevice struct {

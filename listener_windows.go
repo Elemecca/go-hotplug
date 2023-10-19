@@ -25,7 +25,8 @@ import "C"
 type platformListener struct {
 	handle      cgo.Handle
 	notifHandle C.HCMNOTIFICATION
-	eventChan   chan *DeviceInterface
+	eventChan   chan interface{}
+	detachCb    map[string][]func()
 }
 
 func (l *Listener) init() error {
@@ -38,7 +39,8 @@ func (l *Listener) listen() error {
 	}
 
 	l.handle = cgo.NewHandle(l)
-	l.eventChan = make(chan *DeviceInterface, 10)
+	l.eventChan = make(chan interface{}, 10)
+	l.detachCb = make(map[string][]func())
 
 	go l.eventPump()
 
@@ -73,9 +75,18 @@ func (l *Listener) stop() (err error) {
 	}
 
 	l.notifHandle = nil
+	l.detachCb = nil
 	close(l.eventChan)
 	l.handle.Delete()
 	return
+}
+
+type attachEvent struct {
+	devIf *DeviceInterface
+}
+
+type detachEvent struct {
+	devIfId string
 }
 
 //export configNotificationHandler
@@ -108,15 +119,28 @@ func configNotificationHandler(
 		// this function must return promptly to avoid holding up the system
 		// so do the filtering and the user callback in a separate goroutine
 		// this could still block if the channel buffer fills up
-		l.eventChan <- devIf
+		l.eventChan <- &attachEvent{devIf: devIf}
+	} else if action == C.CM_NOTIFY_ACTION_DEVICEINTERFACEREMOVAL {
+		// data.u.DeviceInterface.SymbolicLink
+		eventSymLink := (*uint16)(unsafe.Pointer(&data.u[C.sizeof_GUID]))
+
+		l.eventChan <- &detachEvent{
+			devIfId: windows.UTF16PtrToString(eventSymLink),
+		}
 	}
 
 	return C.ERROR_SUCCESS
 }
 
 func (l *Listener) eventPump() {
-	for devIf := range l.eventChan {
-		l.handleArrive(devIf)
+	for {
+		switch evt := (<-l.eventChan).(type) {
+		case *attachEvent:
+			l.handleArrive(evt.devIf)
+
+		case *detachEvent:
+			l.handleRemove(evt.devIfId)
+		}
 	}
 }
 
@@ -200,6 +224,21 @@ func (l *Listener) handleArrive(devIf *DeviceInterface) {
 
 	devIf.Device.Path = windows.UTF16ToString(devInstanceId[:])
 	devIf.Device.Class = guidToDeviceClass[devIf.Device.classGuid]
+	devIf.listener = l
 
+	devIf.inArrive = true
 	l.callback(devIf)
+	devIf.inArrive = false
+}
+
+func (l *Listener) handleRemove(devIfId string) {
+	callbacks := l.detachCb[devIfId]
+	if callbacks != nil {
+		for _, callback := range callbacks {
+			if callback != nil {
+				callback()
+			}
+		}
+	}
+	delete(l.detachCb, devIfId)
 }
