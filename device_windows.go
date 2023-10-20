@@ -8,7 +8,6 @@ import (
 	"golang.org/x/sys/windows"
 	"regexp"
 	"strconv"
-	"unsafe"
 )
 
 // #include "common_windows.h"
@@ -38,95 +37,9 @@ func (devIf *DeviceInterface) onDetach(callback func()) error {
 type platformDevice struct {
 	deviceInstance C.DEVINST
 	classGuid      C.GUID
-	enumerator     string
-	hardwareIds    map[string]string
-	compatibleIds  map[string]string
-}
-
-func (dev *Device) getProperty(
-	key *C.DEVPROPKEY,
-	expectedType C.DEVPROPTYPE,
-) ([]byte, error) {
-	var propType C.DEVPROPTYPE
-	var size C.ULONG
-
-	sta := C.CM_Get_DevNode_PropertyW(
-		dev.deviceInstance,
-		key,
-		&propType,
-		nil,
-		&size,
-		0,
-	)
-	if sta != C.CR_BUFFER_SMALL {
-		return nil, errors.New(fmt.Sprintf(
-			"failed to get property size (CONFIGRET 0x%X)",
-			sta,
-		))
-	}
-
-	if propType != expectedType {
-		return nil, errors.New(fmt.Sprintf(
-			"property type mismatch (got 0x%X, expected 0x%X)",
-			propType,
-			expectedType,
-		))
-	}
-
-	buf := make([]byte, size)
-
-	sta = C.CM_Get_DevNode_PropertyW(
-		dev.deviceInstance,
-		key,
-		&propType,
-		(C.PBYTE)(unsafe.Pointer(unsafe.SliceData(buf))),
-		&size,
-		0,
-	)
-	if sta != C.CR_SUCCESS {
-		return nil, errors.New(fmt.Sprintf(
-			"failed to get property value (CONFIGRET 0x%X)",
-			sta,
-		))
-	}
-
-	return buf, nil
-}
-
-func (dev *Device) getStringProperty(key *C.DEVPROPKEY) (string, error) {
-	buf, err := dev.getProperty(key, C.DEVPROP_TYPE_STRING)
-	if err != nil {
-		return "", err
-	}
-
-	return windows.UTF16PtrToString((*uint16)(unsafe.Pointer(unsafe.SliceData(buf)))), nil
-}
-
-func (dev *Device) getStringListProperty(key *C.DEVPROPKEY) ([]string, error) {
-	buf, err := dev.getProperty(key, C.DEVPROP_TYPE_STRING_LIST)
-	if err != nil {
-		return nil, err
-	}
-
-	// reinterpret cast []byte to []uint16
-	wcBuf := unsafe.Slice((*uint16)(unsafe.Pointer(unsafe.SliceData(buf))), len(buf)/2)
-
-	wcharStrings := splitUTF16StringList(wcBuf)
-	out := make([]string, len(wcharStrings))
-	for idx, wcharString := range wcharStrings {
-		out[idx] = windows.UTF16ToString(wcharString)
-	}
-
-	return out, nil
-}
-
-func (dev *Device) getInt32Property(key *C.DEVPROPKEY) (int, error) {
-	buf, err := dev.getProperty(key, C.DEVPROP_TYPE_INT32)
-	if err != nil {
-		return 0, err
-	}
-
-	return (int)(*(*C.LONG)(unsafe.Pointer(unsafe.SliceData(buf)))), nil
+	cacheVendorId  int
+	cacheProductId int
+	cacheSerial    string
 }
 
 func (dev *Device) parent() (*Device, error) {
@@ -187,98 +100,76 @@ func (dev *Device) up(class DeviceClass) (*Device, error) {
 	return parent, nil
 }
 
-var idRe = regexp.MustCompile(`^\\\\[^\\]+\\([^\\]+)(?:\\|#|$)`)
-var paramRe = regexp.MustCompile(`^([A-Z]+)_([^&]+)(?:&|$)`)
-
-func (dev *Device) getIds(key *C.DEVPROPKEY) (map[string]string, error) {
-	idStrings, err := dev.getStringListProperty(key)
-	if err != nil {
-		return nil, err
-	}
-
-	params := make(map[string]string)
-	for _, idString := range idStrings {
-		idMatch := idRe.FindStringSubmatch(idString)
-		if idMatch == nil {
-			continue
-		}
-
-		for _, param := range paramRe.FindAllStringSubmatch(idMatch[1], -1) {
-			params[param[1]] = param[2]
-		}
-	}
-
-	return params, nil
-}
-
-func (dev *Device) getHardwareIds() (map[string]string, error) {
-	if dev.hardwareIds == nil {
-		return dev.hardwareIds, nil
-	}
-
-	hardwareIds, err := dev.getIds(&C.DEVPKEY_Device_HardwareIds)
-	if err != nil {
-		return nil, err
-	}
-
-	dev.hardwareIds = hardwareIds
-	return hardwareIds, nil
-}
-
-func (dev *Device) getHardwareId(key string) (string, error) {
-	hardwareIds, err := dev.getHardwareIds()
-	if err != nil {
-		return "", err
-	}
-
-	val, ok := hardwareIds[key]
-	if ok {
-		return val, nil
-	} else {
-		return "", errors.New(fmt.Sprintf("HardwareIds does not contain %s property", key))
-	}
-}
-
-func (dev *Device) getHardwareIdHex(key string) (int, error) {
-	str, err := dev.getHardwareId(key)
-	if err != nil {
-		return 0, err
-	}
-
-	val, err := strconv.ParseInt(str, 16, 32)
-	if err != nil {
-		return 0, err
-	}
-
-	return (int)(val), nil
-}
-
-func (dev *Device) getCompatibleIds() (map[string]string, error) {
-	if dev.compatibleIds == nil {
-		return dev.compatibleIds, nil
-	}
-
-	compatibleIds, err := dev.getIds(&C.DEVPKEY_Device_CompatibleIds)
-	if err != nil {
-		return nil, err
-	}
-
-	dev.compatibleIds = compatibleIds
-	return compatibleIds, nil
-}
-
 func (dev *Device) busNumber() (int, error) {
-	return dev.getInt32Property(&C.DEVPKEY_Device_BusNumber)
+	var result uint32
+	err := getDevPropFixed(
+		dev.deviceInstance,
+		&C.DEVPKEY_Device_BusNumber,
+		C.DEVPROP_TYPE_UINT32,
+		&result,
+	)
+	return (int)(result), err
 }
 
 func (dev *Device) address() (int, error) {
-	return dev.getInt32Property(&C.DEVPKEY_Device_Address)
+	var result uint32
+	err := getDevPropFixed(
+		dev.deviceInstance,
+		&C.DEVPKEY_Device_Address,
+		C.DEVPROP_TYPE_UINT32,
+		&result,
+	)
+	return (int)(result), err
+}
+
+var reUsbPath = regexp.MustCompile(`^USB\\VID_([0-9A-F]{4})&PID_([0-9A-F]{4})\\(.+)$`)
+
+func (dev *Device) parseUsbPath() error {
+	match := reUsbPath.FindStringSubmatch(dev.Path)
+	if match == nil {
+		return errors.New("device Path does not match expected pattern")
+	}
+
+	vendorId, err := strconv.ParseInt(match[1], 16, 32)
+	if err != nil {
+		return err
+	}
+
+	productId, err := strconv.ParseInt(match[2], 16, 32)
+	if err != nil {
+		return err
+	}
+
+	dev.cacheVendorId = (int)(vendorId)
+	dev.cacheProductId = (int)(productId)
+	dev.cacheSerial = match[3]
+	return nil
 }
 
 func (dev *Device) vendorId() (int, error) {
-	return dev.getHardwareIdHex("VID")
+	if dev.Class == DevUsbDevice {
+		if dev.cacheVendorId == 0 {
+			err := dev.parseUsbPath()
+			if err != nil {
+				return 0, err
+			}
+		}
+		return dev.cacheVendorId, nil
+	} else {
+		return 0, errors.New("property not supported for this DeviceClass")
+	}
 }
 
 func (dev *Device) productId() (int, error) {
-	return dev.getHardwareIdHex("PID")
+	if dev.Class == DevUsbDevice {
+		if dev.cacheProductId == 0 {
+			err := dev.parseUsbPath()
+			if err != nil {
+				return 0, err
+			}
+		}
+		return dev.cacheProductId, nil
+	} else {
+		return 0, errors.New("property not supported for this DeviceClass")
+	}
 }

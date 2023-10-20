@@ -105,3 +105,66 @@ func getDevPropFixed[T any](
 
 	return nil
 }
+
+func getDevPropSlice[T any](
+	deviceInstance C.DEVINST,
+	propKey *C.DEVPROPKEY,
+	expectedType C.DEVPROPTYPE,
+) ([]T, error) {
+	var actualType C.DEVPROPTYPE
+	var size C.ULONG
+	sta := C.CM_Get_DevNode_PropertyW(
+		deviceInstance,
+		propKey,
+		&actualType,
+		nil, // request size
+		&size,
+		0,
+	)
+	if sta != C.CR_BUFFER_SMALL {
+		return nil, errors.New(fmt.Sprintf(
+			"failed to get required memory size (CONFIGRET 0x%X)",
+			sta,
+		))
+	} else if actualType != expectedType {
+		return nil, errors.New(fmt.Sprintf(
+			"property type mismatch (got 0x%X, expected 0x%X)",
+			actualType,
+			expectedType,
+		))
+	}
+
+	var fake T
+	sizeEach := (C.ULONG)(unsafe.Sizeof(fake))
+	if size%sizeEach != 0 {
+		return nil, errors.New(fmt.Sprintf(
+			"required size %d is not a multiple of member size %d",
+			size,
+			sizeEach,
+		))
+	}
+
+	buf := make([]T, size/sizeEach)
+	sta = C.CM_Get_DevNode_PropertyW(
+		deviceInstance,
+		propKey,
+		&actualType,
+		(*C.BYTE)(unsafe.Pointer(unsafe.SliceData(buf))),
+		&size,
+		0,
+	)
+	if sta != C.CR_SUCCESS {
+		return nil, errors.New(fmt.Sprintf(
+			"failed to get property value (CONFIGRET 0x%X)",
+			sta,
+		))
+	} else if actualType != expectedType {
+		return nil, errors.New(fmt.Sprintf(
+			"property type mismatch (got 0x%X, expected 0x%X)",
+			actualType,
+			expectedType,
+		))
+	}
+
+	return buf, nil
+}

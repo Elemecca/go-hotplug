@@ -15,10 +15,25 @@ func main() {
 				return
 			}
 
-			busNumber, _ := usb.BusNumber()
-			address, _ := usb.Address()
-			vendorId, _ := usb.VendorId()
-			productId, _ := usb.ProductId()
+			busNumber, err := usb.BusNumber()
+			if err != nil {
+				fmt.Printf("failed to get bus: %s\n", err.Error())
+			}
+
+			address, err := usb.Address()
+			if err != nil {
+				fmt.Printf("failed to get address: %s\n", err.Error())
+			}
+
+			vendorId, err := usb.VendorId()
+			if err != nil {
+				fmt.Printf("failed to get vid: %s\n", err.Error())
+			}
+
+			productId, err := usb.ProductId()
+			if err != nil {
+				fmt.Printf("failed to get pid: %s\n", err.Error())
+			}
 
 			fmt.Printf(
 				"arrive bus=%d address=%d vid=%04x pid=%04x dev=%s\n",
